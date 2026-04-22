@@ -5,7 +5,11 @@ import stringify from "json-stringify-pretty-compact";
 import cloneDeep from "lodash/cloneDeep";
 import isEqual from "lodash/isEqual";
 import { evalCondition } from "@growthbook/growthbook";
-import { ExperimentRefRule, RevisionMetadata } from "shared/validators";
+import {
+  ExperimentRefRule,
+  RevisionMetadata,
+  ApiFeature,
+} from "shared/validators";
 import {
   FeatureInterface,
   FeaturePrerequisite,
@@ -24,7 +28,6 @@ import {
   Environment,
 } from "shared/types/organization";
 import { ProjectInterface } from "shared/types/project";
-import { ApiFeature } from "shared/types/openapi";
 import { GroupMap } from "shared/types/saved-group";
 import { getValidDate } from "../dates";
 import {
@@ -677,6 +680,12 @@ const revisionFieldFillers: Partial<{
   defaultValue: (feature, current) => current ?? feature.defaultValue,
   archived: (feature, current) => current ?? feature.archived ?? false,
   prerequisites: (feature, current) => current ?? feature.prerequisites ?? [],
+  // Backfill holdout from feature so that removing a holdout is detected as a change.
+  // Without this, comparing draft.holdout (null) vs base.holdout (undefined → null)
+  // would show no change when the feature actually has a holdout.
+  // Note: we check for undefined explicitly because null is a valid value (means removal).
+  holdout: (feature, current) =>
+    current !== undefined ? current : (feature.holdout ?? null),
 };
 
 // Backfills stale/missing fields on a revision before passing to autoMerge.
@@ -722,7 +731,7 @@ export function liveRevisionFromFeature(
     holdout:
       "holdout" in (feature as object)
         ? ((feature as { holdout?: RevisionFields["holdout"] }).holdout ?? null)
-        : liveRevision.holdout,
+        : (liveRevision.holdout ?? null),
     metadata: {
       description: feature.description ?? "",
       owner: feature.owner ?? "",
@@ -755,6 +764,9 @@ export function buildEffectiveDraft(
     }),
     ...(draftRevision.metadata !== undefined && {
       metadata: { ...filledLive.metadata, ...draftRevision.metadata },
+    }),
+    ...("holdout" in draftRevision && {
+      holdout: draftRevision.holdout,
     }),
   };
 }
@@ -807,6 +819,7 @@ export function draftDiffersFromLive(
         return true;
     }
   }
+  if (!isEqual(draft.holdout ?? null, filledLive.holdout ?? null)) return true;
   // Pending ramp actions (create/detach) are meaningful changes even if no feature content changed
   if ((draftRevision.rampActions ?? []).length > 0) return true;
   return false;
@@ -850,7 +863,10 @@ function revisionHasGlobalChange(
     return true;
   if (revision.archived !== undefined && revision.archived !== base.archived)
     return true;
-  if ("holdout" in revision && !isEqual(revision.holdout, base.holdout ?? null))
+  if (
+    "holdout" in revision &&
+    !isEqual(revision.holdout ?? null, base.holdout ?? null)
+  )
     return true;
   if (revision.defaultValue !== base.defaultValue) return true;
   if (
@@ -878,7 +894,7 @@ function revisionHasMetadataOnlyGlobalChange(
       !isEqual(revision.prerequisites, base.prerequisites || [])) ||
     (revision.archived !== undefined && revision.archived !== base.archived) ||
     ("holdout" in revision &&
-      !isEqual(revision.holdout, base.holdout ?? null)) ||
+      !isEqual(revision.holdout ?? null, base.holdout ?? null)) ||
     revision.defaultValue !== base.defaultValue;
   if (hasNonMetadata) return false;
   return (
