@@ -182,6 +182,7 @@ export function getAnalysisSettingsFromReportArgs(
     differenceType: args.differenceType ?? "relative",
     baselineVariationIndex: 0,
     numGoalMetrics: args.goalMetrics.length,
+    numGuardrailMetrics: args.guardrailMetrics.length,
   };
 }
 export function getSnapshotSettingsFromReportArgs(
@@ -460,6 +461,7 @@ export async function createReportSnapshot({
       );
     snapshotData =
       (await getLatestSnapshot({
+        context,
         experiment: experiment.id,
         phase: Math.max(experiment.phases.length - 1, 0),
         type: "standard",
@@ -536,6 +538,7 @@ export async function createReportSnapshot({
     regressionAdjustmentEnabled,
     postStratificationEnabled,
     dimension: report.experimentAnalysisSettings.dimension,
+    metricGroups,
   });
 
   const analysisSettings: ExperimentSnapshotAnalysisSettings = {
@@ -574,6 +577,8 @@ export async function createReportSnapshot({
     queries: [],
     unknownVariations: [],
     multipleExposures: 0,
+    hasChunkedAnalyses: false,
+    chunkedAnalysesMeta: [],
     analyses: snapshotData.analyses.map((analysis) => ({
       ...analysis,
       dateCreated: new Date(),
@@ -594,6 +599,7 @@ export async function createReportSnapshot({
   }
 
   const snapshot = await createExperimentSnapshotModel({
+    context,
     data: snapshotData,
   });
 
