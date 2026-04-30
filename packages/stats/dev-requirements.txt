@@ -680,9 +680,9 @@ nodeenv==1.9.1 ; python_full_version >= "3.9.4" and python_version < "4.0" \
 notebook-shim==0.2.4 ; python_full_version >= "3.9.4" and python_version < "4.0" \
     --hash=sha256:411a5be4e9dc882a074ccbcae671eda64cceb068767e9a3419096986560e1cef \
     --hash=sha256:b4b2cfa1b65d98307ca24361f5b30fe785b53c3fd07b7a47e89acb5e6ac638cb
-notebook==7.4.5 ; python_full_version >= "3.9.4" and python_version < "4.0" \
-    --hash=sha256:351635461aca9dad08cf8946a4216f963e2760cc1bf7b1aaaecb23afc33ec046 \
-    --hash=sha256:7c2c4ea245913c3ad8ab3e5d36b34a842c06e524556f5c2e1f5d7d08c986615e
+notebook==7.5.6 ; python_full_version >= "3.9.4" and python_version < "4.0" \
+    --hash=sha256:4dde3f8fb55fa8fb7946d58c6e869ce9baf46d00fc070664f62604569d0faca0 \
+    --hash=sha256:621174aade80108f0020b0f00738000b215f75fa3cd90771ad7aa0f24536a4e1
 numpy==1.26.4 ; python_full_version >= "3.9.4" and python_version < "4.0" \
     --hash=sha256:03a8c78d01d9781b28a6989f6fa1bb2c4f2d51201cf99d3dd875df6fbd96b23b \
     --hash=sha256:08beddf13648eb95f8d867350f6a018a4be2e5ad54c8d8caed89ebca558b2818 \
