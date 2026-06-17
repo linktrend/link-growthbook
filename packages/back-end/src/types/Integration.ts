@@ -1,5 +1,5 @@
 import { ExperimentMetricInterface } from "shared/experiments";
-import { FormatDialect, TemplateVariables } from "shared/types/sql";
+import { TemplateVariables } from "shared/types/sql";
 import {
   AlterNewIncrementalUnitsQueryParams,
   AutoMetricTrackedEvent,
@@ -8,6 +8,10 @@ import {
   CreateExperimentIncrementalUnitsQueryParams,
   CreateMetricSourceCovariateTableQueryParams,
   CreateMetricSourceTableQueryParams,
+  CreateAggregatedFactTableQueryParams,
+  InsertAggregatedFactTableDataQueryParams,
+  AggregatedFactTableMaxTimestampQueryParams,
+  DropAggregatedFactTableQueryParams,
   DimensionSlicesQueryParams,
   DimensionSlicesQueryResponse,
   DropMetricSourceCovariateTableQueryParams,
@@ -32,6 +36,7 @@ import {
   IncrementalWithNoOutputQueryResponse,
   InformationSchema,
   InsertMetricSourceCovariateDataQueryParams,
+  InsertMetricSourceCovariateFromAggregatedFactTableQueryParams,
   InsertMetricSourceDataQueryParams,
   MaxTimestampIncrementalUnitsQueryParams,
   MaxTimestampMetricSourceQueryParams,
@@ -87,7 +92,6 @@ export interface SourceIntegrationInterface {
     activationMetricDoc: ExperimentMetricInterface | null,
     dimension: DimensionInterface | null,
   ): string;
-  getFormatDialect?(): FormatDialect;
   getExperimentResults(
     snapshotSettings: ExperimentSnapshotSettings,
     metrics: ExperimentMetricInterface[],
@@ -107,6 +111,7 @@ export interface SourceIntegrationInterface {
     query: string,
     testDays?: number,
     templateVariables?: TemplateVariables,
+    timestampColumn?: string,
   ): string;
   getTestQuery?(params: TestQueryParams): string;
   getFreeFormQuery?(query: string, limit?: number): string;
@@ -170,11 +175,26 @@ export interface SourceIntegrationInterface {
   getDropMetricSourceCovariateTableQuery(
     params: DropMetricSourceCovariateTableQueryParams,
   ): string;
+  getCreateAggregatedFactTableQuery(
+    params: CreateAggregatedFactTableQueryParams,
+  ): string;
+  getInsertAggregatedFactTableDataQuery(
+    params: InsertAggregatedFactTableDataQueryParams,
+  ): string;
+  getAggregatedFactTableMaxTimestampQuery(
+    params: AggregatedFactTableMaxTimestampQueryParams,
+  ): string;
+  getDropAggregatedFactTableQuery(
+    params: DropAggregatedFactTableQueryParams,
+  ): string;
   getCreateMetricSourceCovariateTableQuery(
     params: CreateMetricSourceCovariateTableQueryParams,
   ): string;
   getInsertMetricSourceCovariateDataQuery(
     params: InsertMetricSourceCovariateDataQueryParams,
+  ): string;
+  getInsertMetricSourceCovariateFromAggregatedFactTableQuery(
+    params: InsertMetricSourceCovariateFromAggregatedFactTableQueryParams,
   ): string;
   getIncrementalRefreshStatisticsQuery(
     params: IncrementalRefreshStatisticsQueryParams,
@@ -278,7 +298,10 @@ export interface SourceIntegrationInterface {
     database?: string,
     requireSchema?: boolean,
   ): string;
-  cancelQuery?(externalId: string): Promise<void>;
+  cancelQuery?(
+    externalId: string,
+    metadata?: Record<string, string>,
+  ): Promise<void>;
   getFeatureUsage?(
     feature: string,
     lookback: FeatureUsageLookback,

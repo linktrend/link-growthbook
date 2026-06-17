@@ -1,11 +1,11 @@
 import { useMemo, useState } from "react";
 import { Box, Flex } from "@radix-ui/themes";
-import ReactDiffViewer, { DiffMethod } from "react-diff-viewer";
+import ReactDiffViewer, { DiffMethod } from "react-diff-viewer-continued";
 import { FaAngleDown, FaAngleUp } from "react-icons/fa";
 import { PiArrowsClockwise } from "react-icons/pi";
 import { AuditInterface, EventType } from "shared/types/audit";
 import { datetime } from "shared/dates";
-import Link from "next/link";
+import Link from "@/ui/Link";
 import EventUser from "@/components/Avatar/EventUser";
 import { auditInterfaceUserToEventUser } from "@/components/Avatar/auditUserToEventUser";
 import Modal from "@/components/Modal";

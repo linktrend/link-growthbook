@@ -1,20 +1,26 @@
 import { ExperimentInterfaceStringDates } from "shared/types/experiment";
 import React, { FC, useState, useEffect } from "react";
 import dynamic from "next/dynamic";
-import { DifferenceType, StatsEngine } from "shared/types/stats";
+import {
+  DifferenceType,
+  SignificanceThresholds,
+  StatsEngine,
+} from "shared/types/stats";
 import { getValidDate, ago, relativeDate } from "shared/dates";
 import {
   DEFAULT_PROPER_PRIOR_STDDEV,
   DEFAULT_STATS_ENGINE,
 } from "shared/constants";
 import {
-  isPrecomputedDimension,
+  isDimensionPrecomputed,
   getEffectiveLookbackOverride,
   getLatestPhaseVariations,
 } from "shared/experiments";
 import { ExperimentSnapshotInterface } from "shared/types/experiment-snapshot";
 import { MetricSnapshotSettings } from "shared/types/report";
 import { useDefinitions } from "@/services/DefinitionsContext";
+import useConfidenceLevels from "@/hooks/useConfidenceLevels";
+import usePValueThreshold from "@/hooks/usePValueThreshold";
 import { useAuth } from "@/services/auth";
 import { getQueryStatus } from "@/components/Queries/RunQueriesButton";
 import { useSnapshot } from "@/components/Experiment/SnapshotProvider";
@@ -89,18 +95,31 @@ const Results: FC<{
   const orgSettings = useOrgSettings();
   const pValueCorrection = orgSettings?.pValueCorrection;
 
+  const bayesianConfidenceLevels = useConfidenceLevels(experiment.project);
+  const pValueThreshold = usePValueThreshold(experiment.project);
+  const significanceThresholds: SignificanceThresholds = {
+    bayesianConfidenceLevels,
+    pValueThreshold,
+  };
+
   const {
     error,
     snapshot,
     analysis,
-    latest,
+    latestSummary: latest,
     phase,
     setPhase,
     dimension,
     setAnalysisSettings,
-    mutateSnapshot: mutate,
+    mutate,
     loading: snapshotLoading,
   } = useSnapshot();
+
+  // Child tables (BreakdownResults/CompactResults → BaselineChooserColumnLabel)
+  // append analyses to the **current** snapshot in place, so the heavy
+  // fetch needs to be re-issued when they call back. Bind `inPlace: true`
+  // here so the children stay decoupled from the option name.
+  const mutateInPlace = () => mutate({ inPlace: true });
 
   const queryStatusData = getQueryStatus(latest?.queries || [], latest?.error);
   const { status } = queryStatusData;
@@ -182,9 +201,10 @@ const Results: FC<{
     );
   }
 
-  // cannot re-aggregate quantile metrics across pre-computed dimensions
-  const showErrorsOnQuantileMetrics = analysis?.settings?.dimensions.some(
-    isPrecomputedDimension,
+  // cannot re-aggregate quantile metrics across non-unit pre-computed dimensions
+  const showErrorsOnQuantileMetrics = analysis?.settings?.dimensions.some((d) =>
+    // Pass in empty array to indicate pre-computed standalone (not exp) dimensions are fine
+    isDimensionPrecomputed(d, []),
   );
 
   const datasource = experiment.datasource
@@ -337,6 +357,7 @@ const Results: FC<{
       {analysis && (
         <MetricDrilldownProvider
           experimentId={experiment.id}
+          significanceThresholds={significanceThresholds}
           phase={phase}
           experimentStatus={experiment.status}
           analysis={analysis}
@@ -366,6 +387,7 @@ const Results: FC<{
         >
           {showDateResults ? (
             <DateResults
+              significanceThresholds={significanceThresholds}
               goalMetrics={experiment.goalMetrics}
               secondaryMetrics={experiment.secondaryMetrics}
               guardrailMetrics={experiment.guardrailMetrics}
@@ -380,6 +402,7 @@ const Results: FC<{
           ) : showBreakDownResults && snapshot ? (
             <BreakDownResults
               experimentId={experiment.id}
+              significanceThresholds={significanceThresholds}
               key={analysis?.settings?.dimensions?.[0] ?? snapshot.dimension}
               results={analysis?.results ?? []}
               queryStatusData={queryStatusData}
@@ -401,7 +424,7 @@ const Results: FC<{
               snapshot={snapshot}
               analysis={analysis}
               setAnalysisSettings={setAnalysisSettings}
-              mutate={mutate}
+              mutate={mutateInPlace}
               goalMetrics={experiment.goalMetrics}
               secondaryMetrics={experiment.secondaryMetrics}
               guardrailMetrics={experiment.guardrailMetrics}
@@ -442,6 +465,7 @@ const Results: FC<{
           ) : showCompactResults ? (
             <CompactResults
               experimentId={experiment.id}
+              significanceThresholds={significanceThresholds}
               editMetrics={editMetrics}
               variations={variations}
               variationFilter={analysisBarSettings.variationFilter}
@@ -461,7 +485,7 @@ const Results: FC<{
               snapshot={snapshot}
               analysis={analysis}
               setAnalysisSettings={setAnalysisSettings}
-              mutate={mutate}
+              mutate={mutateInPlace}
               multipleExposures={snapshot.multipleExposures || 0}
               results={analysis.results[0]}
               queryStatusData={queryStatusData}

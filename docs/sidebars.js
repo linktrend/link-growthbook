@@ -71,6 +71,8 @@ export default {
           collapsed: false,
           items: [
             "features/publishing-and-approval-flows", // Publishing & Approval Flows (NEW)
+            "features/saved-group-revisions-api", // Saved Group Revisions API (BETA)
+            "features/json-schema-validation", // JSON Schema Validation
             "features/stale-detection", // Stale Feature Detection
             "features/code-references", // Code References
             "features/diagnostics", // Feature Diagnostics
@@ -479,10 +481,26 @@ export default {
       label: "Insights",
     },
     {
-      type: "doc",
-      id: "product-analytics",
+      type: "category",
       label: "Product Analytics",
       className: "pill-new",
+      collapsed: true,
+      link: {
+        type: "doc",
+        id: "product-analytics/index",
+      },
+      items: [
+        {
+          type: "doc",
+          id: "product-analytics/explorer",
+          label: "Explorer",
+        },
+        {
+          type: "doc",
+          id: "product-analytics/dashboards",
+          label: "Dashboards",
+        },
+      ],
     },
     {
       type: "category",
@@ -541,9 +559,38 @@ export default {
       collapsed: true,
       items: [
         {
-          type: "doc",
-          id: "integrations/mcp",
-          label: "MCP Server",
+          type: "category",
+          label: "AI Agents",
+          collapsed: true,
+          link: { type: "doc", id: "integrations/ai-agents/index" },
+          items: [
+            {
+              type: "doc",
+              id: "integrations/mcp",
+              label: "MCP Server",
+            },
+            {
+              type: "category",
+              label: "Agent Skills",
+              collapsed: true,
+              link: {
+                type: "doc",
+                id: "integrations/ai-agents/agent-skills/index",
+              },
+              items: [
+                {
+                  type: "doc",
+                  id: "integrations/ai-agents/agent-skills/feature-flags",
+                  label: "Feature flag skills",
+                },
+                {
+                  type: "doc",
+                  id: "integrations/ai-agents/agent-skills/experiments",
+                  label: "Experiment skills",
+                },
+              ],
+            },
+          ],
         },
         {
           type: "doc",

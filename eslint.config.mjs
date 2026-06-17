@@ -11,6 +11,7 @@ import globals from "globals";
 import * as tsParser from "@typescript-eslint/parser";
 import js from "@eslint/js";
 import { FlatCompat } from "@eslint/eslintrc";
+import noAlertClassname from "./eslint-rules/no-alert-classname.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -203,6 +204,7 @@ export default defineConfig([
                 "Callout",
                 "Checkbox",
                 "DataList",
+                "Dialog",
                 "DropdownMenu",
                 "Heading",
                 "Link",
@@ -214,6 +216,11 @@ export default defineConfig([
                 "Tabs",
                 "Text",
               ],
+            },
+            {
+              name: "@/components/Modal",
+              message:
+                "Use the new Modal from @/ui/Modal instead of the legacy Modal component.",
             },
           ],
 
@@ -238,6 +245,14 @@ export default defineConfig([
   {
     files: ["./packages/front-end/**/*.ts*"],
 
+    plugins: {
+      local: {
+        rules: {
+          "no-alert-classname": noAlertClassname,
+        },
+      },
+    },
+
     rules: {
       "no-restricted-syntax": [
         "error",
@@ -254,6 +269,7 @@ export default defineConfig([
             "Don't use window.history.replaceState directly. Use router.replace(url, undefined, { shallow: true }) from next/router instead.",
         },
       ],
+      "local/no-alert-classname": "error",
     },
   },
   {

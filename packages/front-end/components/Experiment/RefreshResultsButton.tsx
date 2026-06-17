@@ -1,10 +1,20 @@
 import React from "react";
 import { Queries } from "shared/types/query";
 import { ExperimentInterfaceStringDates } from "shared/types/experiment";
-import { ExperimentSnapshotAnalysisSettings } from "shared/types/experiment-snapshot";
-import { SafeRolloutInterface } from "shared/validators";
-import { isPrecomputedDimension } from "shared/experiments";
+import { isDimensionPrecomputed } from "shared/experiments";
+import {
+  ExperimentSnapshotAnalysisSettings,
+  ExperimentSnapshotInterface,
+} from "shared/types/experiment-snapshot";
+import {
+  SafeRolloutInterface,
+  SafeRolloutSnapshotInterface,
+} from "shared/validators";
 import { useAuth } from "@/services/auth";
+import { useDefinitions } from "@/services/DefinitionsContext";
+import { useUser } from "@/services/UserContext";
+import { getHonoredPrecomputedUnitDimensionIds } from "@/services/experiments";
+import { trackSnapshot } from "@/services/track";
 import RunQueriesButton from "@/components/Queries/RunQueriesButton";
 import ExperimentRefreshSnapshotButton from "@/components/Experiment/RefreshSnapshotButton";
 import SafeRolloutRefreshSnapshotButton from "@/components/SafeRollout/RefreshSnapshotButton";
@@ -22,10 +32,17 @@ export interface RefreshResultsButtonProps<
   entityId: string;
   datasourceId?: string | null;
   latest?: T;
-  onSubmitSuccess?: (snapshot: T) => void;
   mutate: () => void;
   mutateAdditional?: () => void;
   setRefreshError: (error: string) => void;
+  experimentSnapshotTrackingProps?: {
+    trackingSource: string;
+    datasourceType: string | null;
+  };
+  onSuccess?: () => void;
+  // Return false to abort the refresh (e.g. to open a confirmation modal
+  // instead). Mirrors Modal's customValidation. Side effects are allowed.
+  customValidation?: () => boolean | Promise<boolean>;
   // Experiment/holdout-specific props
   experiment?: ExperimentInterfaceStringDates;
   phase?: number;
@@ -48,16 +65,20 @@ export default function RefreshResultsButton<
   entityId,
   datasourceId,
   latest,
-  onSubmitSuccess,
   mutate,
   mutateAdditional,
   setRefreshError,
+  experimentSnapshotTrackingProps,
+  onSuccess,
+  customValidation,
   experiment,
   phase,
   dimension,
   safeRollout,
 }: RefreshResultsButtonProps<T>) {
   const { apiCall } = useAuth();
+  const { getDatasourceById } = useDefinitions();
+  const { hasCommercialFeature } = useUser();
 
   const hasQueries = latest?.queries && latest.queries.length > 0;
 
@@ -87,6 +108,65 @@ export default function RefreshResultsButton<
       ? `/safe-rollout/${entityId}/snapshot`
       : `/experiment/${entityId}/snapshot`;
 
+  // Precomputed dimensions are computed as part of a standard snapshot, so we
+  // don't need to pass them to the backend for a new snapshot query
+  const snapshotDimension = isDimensionPrecomputed(
+    dimension,
+    getHonoredPrecomputedUnitDimensionIds(
+      experiment?.precomputedUnitDimensionIds,
+      experiment?.datasource
+        ? getDatasourceById(experiment.datasource)
+        : undefined,
+      hasCommercialFeature("pipeline-mode"),
+    ),
+  )
+    ? ""
+    : (dimension ?? "");
+
+  // Kicks off a new snapshot query for the given dimension ("" = main results).
+  const runSnapshot = async (dimensionToUse: string) => {
+    const body =
+      entityType === "experiment" || entityType === "holdout"
+        ? JSON.stringify({
+            phase: phase ?? 0,
+            dimension: dimensionToUse,
+          })
+        : undefined;
+
+    try {
+      if (entityType === "safe-rollout") {
+        await apiCall<{ snapshot: SafeRolloutSnapshotInterface }>(
+          snapshotEndpoint,
+          { method: "POST" },
+        );
+      } else {
+        const res = await apiCall<{
+          snapshot: ExperimentSnapshotInterface;
+        }>(snapshotEndpoint, {
+          method: "POST",
+          ...(body && { body }),
+        });
+        if (experimentSnapshotTrackingProps) {
+          trackSnapshot(
+            "create",
+            experimentSnapshotTrackingProps.trackingSource,
+            experimentSnapshotTrackingProps.datasourceType,
+            res.snapshot,
+          );
+        }
+      }
+      onSuccess?.();
+      setRefreshError("");
+    } catch (e) {
+      setRefreshError(e.message);
+    } finally {
+      // Always refresh, regardless of success or failure
+      // to give the UI a chance to catch up
+      mutate();
+      mutateAdditional?.();
+    }
+  };
+
   return (
     <>
       {shouldUseRunQueriesButton ? (
@@ -105,34 +185,11 @@ export default function RefreshResultsButton<
           useRadixButton={true}
           radixVariant="outline"
           onSubmit={async () => {
-            // Precomputed dimensions are computed as part of a standard snapshot,
-            // so we don't need to pass them to the backend for a new snapshot query
-            const snapshotDimension = isPrecomputedDimension(dimension)
-              ? ""
-              : (dimension ?? "");
-            const body =
-              entityType === "experiment" || entityType === "holdout"
-                ? JSON.stringify({
-                    phase: phase ?? 0,
-                    dimension: snapshotDimension,
-                  })
-                : undefined;
-
-            try {
-              const res = await apiCall<{ snapshot: T }>(snapshotEndpoint, {
-                method: "POST",
-                ...(body && { body }),
-              });
-              onSubmitSuccess?.(res.snapshot);
-              setRefreshError("");
-            } catch (e) {
-              setRefreshError(e.message);
-            } finally {
-              // Always refresh, regardless of success or failure
-              // to give the UI a chance to catch up
-              mutate();
-              mutateAdditional?.();
+            if (customValidation && !(await customValidation())) {
+              return;
             }
+
+            await runSnapshot(snapshotDimension);
           }}
         />
       ) : shouldRenderExperimentButton ? (
@@ -147,11 +204,13 @@ export default function RefreshResultsButton<
           setError={(error) => setRefreshError(error ?? "")}
           useRadixButton={true}
           radixVariant="outline"
+          customValidation={customValidation}
         />
       ) : shouldRenderSafeRolloutButton ? (
         <SafeRolloutRefreshSnapshotButton
           mutate={mutate}
           safeRollout={safeRollout}
+          customValidation={customValidation}
         />
       ) : null}
     </>

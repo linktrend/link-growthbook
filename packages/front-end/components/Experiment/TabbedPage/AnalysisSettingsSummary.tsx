@@ -15,6 +15,7 @@ import {
   ExperimentMetricInterface,
   getLatestPhaseVariations,
 } from "shared/experiments";
+import { isNewerOverallResultsDataAvailable } from "shared/enterprise";
 import { getSnapshotAnalysis } from "shared/util";
 import { MetricGroupInterface } from "shared/types/metric-groups";
 import { getValidDate } from "shared/dates";
@@ -31,6 +32,7 @@ import { trackSnapshot } from "@/services/track";
 import { useSnapshot } from "@/components/Experiment/SnapshotProvider";
 import { useAuth } from "@/services/auth";
 import useOrgSettings from "@/hooks/useOrgSettings";
+import usePValueThreshold from "@/hooks/usePValueThreshold";
 import { useUser } from "@/services/UserContext";
 import { getQueryStatus } from "@/components/Queries/RunQueriesButton";
 import RefreshResultsButton from "@/components/Experiment/RefreshResultsButton";
@@ -39,13 +41,17 @@ import AsyncQueriesModal from "@/components/Queries/AsyncQueriesModal";
 import OutdatedBadge from "@/components/OutdatedBadge";
 import usePermissionsUtil from "@/hooks/usePermissionsUtils";
 import Callout from "@/ui/Callout";
-import { getIsExperimentIncludedInIncrementalRefresh } from "@/services/experiments";
+import {
+  getIsExperimentIncludedInIncrementalRefresh,
+  getPipelineSettingsAfterDisablingExperiment,
+} from "@/services/experiments";
 import Metadata from "@/ui/Metadata";
 import ResultsFilter from "@/components/Experiment/ResultsFilter/ResultsFilter";
 import { filterMetricsByTags } from "@/hooks/useExperimentTableRows";
 import DimensionChooser from "@/components/Dimensions/DimensionChooser";
 import Link from "@/ui/Link";
 import MigrateResultsToDashboardModal from "@/components/Experiment/ResultsFilter/MigrateResultsToDashboardModal";
+import UpdateDimensionBreakdownModal from "@/components/Experiment/UpdateDimensionBreakdownModal";
 
 export interface Props {
   experiment: ExperimentInterfaceStringDates;
@@ -82,7 +88,7 @@ const numberFormatter = Intl.NumberFormat();
 
 export default function AnalysisSettingsSummary({
   experiment,
-  mutate,
+  mutate: mutateExperiment,
   statsEngine,
   editMetrics,
   variationFilter,
@@ -121,6 +127,7 @@ export default function AnalysisSettingsSummary({
   )?.userIdType;
 
   const orgSettings = useOrgSettings();
+  const pValueThreshold = usePValueThreshold(experiment.project);
   const permissionsUtil = usePermissionsUtil();
 
   const { hasCommercialFeature } = useUser();
@@ -135,11 +142,13 @@ export default function AnalysisSettingsSummary({
 
   const {
     snapshot,
-    latest,
+    dimensionless,
+    latestSummary: latest,
     analysis,
     dimension: _snapshotDimension,
     precomputedDimensions,
-    mutateSnapshot,
+    sourceSnapshot,
+    mutate,
     setAnalysisSettings,
     setSnapshotType,
     setDimension: setSnapshotDimension,
@@ -169,6 +178,10 @@ export default function AnalysisSettingsSummary({
   const [queriesModalOpen, setQueriesModalOpen] = useState(false);
   const [migrateToDashboardModalOpen, setMigrateToDashboardModalOpen] =
     useState(false);
+  const [
+    updateDimensionBreakdownModalOpen,
+    setUpdateDimensionBreakdownModalOpen,
+  ] = useState(false);
 
   const datasource = experiment
     ? getDatasourceById(experiment.datasource)
@@ -211,22 +224,54 @@ export default function AnalysisSettingsSummary({
       experiment.id,
     );
 
+  const newerOverallResultsAvailable = isNewerOverallResultsDataAvailable(
+    sourceSnapshot,
+    dimensionless,
+  );
+
+  const runSnapshot = async (
+    dimensionToRun: string,
+    opts?: { force?: boolean; trackingSource?: string },
+  ) => {
+    const force = opts?.force ?? false;
+    const trackingSource = opts?.trackingSource ?? "RunQueriesButton";
+    try {
+      const res = await apiCall<{ snapshot: ExperimentSnapshotInterface }>(
+        `/experiment/${experiment.id}/snapshot${force ? "?force=true" : ""}`,
+        {
+          method: "POST",
+          body: JSON.stringify({ phase, dimension: dimensionToRun }),
+        },
+      );
+      trackSnapshot(
+        "create",
+        trackingSource,
+        datasource?.type || null,
+        res.snapshot,
+      );
+      setRefreshError("");
+    } catch (e) {
+      setRefreshError(e.message);
+    } finally {
+      mutate();
+      mutateExperiment();
+    }
+  };
+
   const handleDisableIncrementalRefresh = async () => {
     if (!datasource || !isExperimentIncludedInIncrementalRefresh) return;
+
+    const pipelineSettings = getPipelineSettingsAfterDisablingExperiment(
+      datasource.settings.pipelineSettings,
+      experiment.id,
+    );
 
     await apiCall(`/datasource/${datasource.id}`, {
       method: "PUT",
       body: JSON.stringify({
         settings: {
           ...datasource.settings,
-          pipelineSettings: {
-            ...datasource.settings.pipelineSettings,
-            excludedExperimentIds: [
-              ...(datasource.settings?.pipelineSettings
-                ?.excludedExperimentIds ?? []),
-              experiment.id,
-            ],
-          },
+          pipelineSettings,
         },
       }),
     });
@@ -286,6 +331,7 @@ export default function AnalysisSettingsSummary({
     snapshot,
     metricGroups,
     orgSettings,
+    pValueThreshold,
     statsEngine,
     hasRegressionAdjustmentFeature,
     hasPostStratificationFeature,
@@ -293,7 +339,15 @@ export default function AnalysisSettingsSummary({
     phase,
     unjoinableMetrics,
     conversionWindowMetrics,
+    newerOverallResultsAvailable,
   });
+
+  // For Incremental Pipeline mode, dimension results are built on top
+  // of overall results (dimensionless snapshot)
+  // So if the user is clicking 'Update' on a scenario that we know there's no
+  // newer overall results available, we show a confirmation modal explaining why.
+  const needsDimensionRefreshConfirm =
+    !!sourceSnapshot && !newerOverallResultsAvailable;
 
   const ds = getDatasourceById(experiment.datasource);
 
@@ -433,6 +487,7 @@ export default function AnalysisSettingsSummary({
     snapshot: snap,
     metricGroups: mg = [],
     orgSettings: org,
+    pValueThreshold: projectScopedPValueThreshold,
     statsEngine: engine,
     hasRegressionAdjustmentFeature,
     hasPostStratificationFeature,
@@ -440,11 +495,13 @@ export default function AnalysisSettingsSummary({
     phase: currentPhase,
     unjoinableMetrics: unjoinable,
     conversionWindowMetrics: conversion,
+    newerOverallResultsAvailable,
   }: {
     experiment?: ExperimentInterfaceStringDates;
     snapshot?: ExperimentSnapshotInterface;
     metricGroups?: MetricGroupInterface[];
     orgSettings: OrganizationSettings;
+    pValueThreshold: number;
     statsEngine: StatsEngine;
     hasRegressionAdjustmentFeature: boolean;
     hasPostStratificationFeature: boolean;
@@ -452,6 +509,7 @@ export default function AnalysisSettingsSummary({
     phase?: number;
     unjoinableMetrics?: Set<string>;
     conversionWindowMetrics?: Set<string>;
+    newerOverallResultsAvailable?: boolean;
   }): { outdated: boolean; reasons: string[] } {
     const snapshotSettings = snap?.settings;
     const analysisSettings = snap ? getSnapshotAnalysis(snap)?.settings : null;
@@ -538,7 +596,7 @@ export default function AnalysisSettingsSummary({
     if (
       isDifferent(
         analysisSettings.pValueThreshold || DEFAULT_P_VALUE_THRESHOLD,
-        org.pValueThreshold || DEFAULT_P_VALUE_THRESHOLD,
+        projectScopedPValueThreshold || DEFAULT_P_VALUE_THRESHOLD,
       )
     ) {
       reasons.push("P-value threshold changed");
@@ -591,6 +649,12 @@ export default function AnalysisSettingsSummary({
       engine === "frequentist"
     ) {
       reasons.push("Sequential testing settings changed");
+    }
+
+    // For incremental-refresh dimension breakdowns: the breakdown reads from
+    // the overall results, so newer overall data makes it outdated too.
+    if (newerOverallResultsAvailable) {
+      reasons.push("Newer Overall Results are available");
     }
 
     return { outdated: reasons.length > 0, reasons };
@@ -647,9 +711,12 @@ export default function AnalysisSettingsSummary({
               <QueriesLastRun
                 status={status}
                 dateCreated={snapshot?.dateCreated}
+                sourceSnapshot={sourceSnapshot}
                 latestQueryDate={latest?.dateCreated}
                 nextUpdate={experiment.nextSnapshotAttempt}
-                autoUpdateEnabled={experiment.autoSnapshots}
+                autoUpdateEnabled={
+                  experiment.autoSnapshots && !experiment.disableAutoSnapshots
+                }
                 showAutoUpdateWidget={true}
                 failedString={
                   latest && !latest.queries.length && latest.error
@@ -671,7 +738,7 @@ export default function AnalysisSettingsSummary({
               />
               {hasData && outdated && status !== "running" ? (
                 <OutdatedBadge
-                  label={`Analysis settings have changed since last run. Click "Update" to re-run the analysis.`}
+                  label={`These results are outdated. Click "Update" to re-run the analysis.`}
                   reasons={reasons}
                   hasData={hasData && hasValidStatsEngine}
                 />
@@ -688,26 +755,35 @@ export default function AnalysisSettingsSummary({
                 entityId={experiment.id}
                 datasourceId={experiment.datasource}
                 latest={latest}
-                onSubmitSuccess={(snapshot) => {
-                  trackSnapshot(
-                    "create",
-                    "RunQueriesButton",
-                    datasource?.type || null,
-                    snapshot,
-                  );
+                experimentSnapshotTrackingProps={{
+                  trackingSource: "RunQueriesButton",
+                  datasourceType: datasource?.type || null,
+                }}
+                onSuccess={() => {
                   if (experiment.type === "multi-armed-bandit") {
                     setSnapshotType?.("exploratory");
                   } else {
                     setSnapshotType?.(undefined);
                   }
                 }}
-                mutate={mutateSnapshot}
-                mutateAdditional={mutate}
+                // Poll loop + post-submit refresh hit the default
+                // status-only `mutate()` — the provider auto-upgrades to a
+                // full snapshot fetch when status reports a newer successful
+                // run, so a heavy refetch here would be redundant.
+                mutate={mutate}
+                mutateAdditional={mutateExperiment}
                 setRefreshError={setRefreshError}
                 experiment={experiment}
                 phase={phase}
                 dimension={dimension}
                 setAnalysisSettings={setAnalysisSettings}
+                customValidation={() => {
+                  if (needsDimensionRefreshConfirm) {
+                    setUpdateDimensionBreakdownModalOpen(true);
+                    return false;
+                  }
+                  return true;
+                }}
               />
             ) : null}
 
@@ -717,30 +793,10 @@ export default function AnalysisSettingsSummary({
               forceRefresh={
                 allMetrics.length > 0
                   ? async () => {
-                      await apiCall<{
-                        snapshot: ExperimentSnapshotInterface;
-                      }>(`/experiment/${experiment.id}/snapshot?force=true`, {
-                        method: "POST",
-                        body: JSON.stringify({
-                          phase,
-                          dimension,
-                        }),
-                      })
-                        .then((res) => {
-                          trackSnapshot(
-                            "create",
-                            "ForceRerunQueriesButton",
-                            datasource?.type || null,
-                            res.snapshot,
-                          );
-                          mutateSnapshot();
-                          mutate();
-                          setRefreshError("");
-                        })
-                        .catch((e) => {
-                          console.error(e);
-                          setRefreshError(e.message);
-                        });
+                      await runSnapshot(dimension ?? "", {
+                        force: true,
+                        trackingSource: "ForceRerunQueriesButton",
+                      });
                     }
                   : undefined
               }
@@ -797,7 +853,10 @@ export default function AnalysisSettingsSummary({
                 userIdType={userIdType as "user" | "anonymous" | undefined}
                 analysis={analysis}
                 snapshot={snapshot}
-                mutate={mutateSnapshot}
+                // DimensionChooser appends a new analysis to the existing
+                // snapshot in place — pass `inPlace: true` so the heavy
+                // fetch refreshes (the id-keyed auto-upgrade won't fire).
+                mutate={() => mutate({ inPlace: true })}
                 setAnalysisSettings={setAnalysisSettings}
                 setSnapshotDimension={setSnapshotDimension}
               />
@@ -878,6 +937,31 @@ export default function AnalysisSettingsSummary({
         sortDirection={sortDirection ?? null}
         differenceType={differenceType}
       />
+      {updateDimensionBreakdownModalOpen && sourceSnapshot && (
+        <UpdateDimensionBreakdownModal
+          sourceSnapshot={sourceSnapshot}
+          close={() => setUpdateDimensionBreakdownModalOpen(false)}
+          handleUpdateDimensionOnlyClick={async () => {
+            await runSnapshot(dimension ?? "", {
+              trackingSource: "UpdateDimensionBreakdownModal",
+            });
+          }}
+          handleGoToOverallResultsClick={() => {
+            // Kick-off overall results refresh.
+            void runSnapshot("", {
+              trackingSource: "UpdateDimensionBreakdownModal",
+            });
+
+            setUpdateDimensionBreakdownModalOpen(false);
+
+            // Show the overall results
+            // FIXME: this feels fragile, it should be only 1 state call
+            setSnapshotDimension("");
+            setAnalysisSettings(null);
+            setDimension?.("", true);
+          }}
+        />
+      )}
     </Box>
   );
 }
